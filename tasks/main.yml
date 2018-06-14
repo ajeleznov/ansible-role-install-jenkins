@@ -1,0 +1,8 @@
+---
+# tasks file for ajeleznov.ansible-role-install-jenkins
+# The Jenkins OSS rpm file will be downloaded from Redhat-Stable repository
+# and installed on the dedicated partition
+  - name:              PREREQUISITES] [ Print the host OS
+    debug:
+      msg:             'ansible_os_family = {{ ansible_os_family }}'
+      verbosity:       1

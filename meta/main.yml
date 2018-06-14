@@ -1,0 +1,21 @@
+---
+galaxy_info:
+  author: Dr. Andrei Jeleznov
+  description: Installs the Jenkins automation server on Redhat Family Linux using RPM package file.
+
+  license:
+    - Apache v.2.0
+
+  min_ansible_version: 2.0
+  platforms:
+    - name: EL
+      versions:
+        - all
+    - name: Fedora
+      versions:
+        - all
+
+  galaxy_tags:
+    - jenkins, rpm
+
+  dependencies: []
