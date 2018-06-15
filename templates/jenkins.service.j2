@@ -1,0 +1,16 @@
+[Unit]
+Description=Jenkins
+After=network.target
+Requires=network.target
+
+[Service]
+ExecStart={{ jenkins_initscript }} start
+ExecStop={{ jenkins_initscript }} stop
+ExecReload={{ jenkins_initscript }} force-reload
+Restart=always
+RestartSec=10
+Type=forking
+PIDFile=/run/jenkins.pid
+
+[Install]
+WantedBy=multi-user.target

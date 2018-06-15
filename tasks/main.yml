@@ -2,7 +2,253 @@
 # tasks file for ajeleznov.ansible-role-install-jenkins
 # The Jenkins OSS rpm file will be downloaded from Redhat-Stable repository
 # and installed on the dedicated partition
+
+# PREREQUISITES
+  - name:              PREREQUISITES] [ Print some role parameters
+    debug:
+      msg:             >
+                       Installining into jenkins_home={{ jenkins_home }}
+                       with URL={{ jenkins_jenkins_URL }}
+                       jenkins_java_options={{jenkins_java_options}}
+      verbosity:       1
+
   - name:              PREREQUISITES] [ Print the host OS
     debug:
       msg:             'ansible_os_family = {{ ansible_os_family }}'
       verbosity:       1
+
+  - name:              'PREREQUISITES] [ Check the host OS'
+    tags:              [ 'jenkins-prerequisites' ]
+    fail:
+      msg:             "[ERROR] Unsupported OS: {{ ansible_os_family }}"
+    when:              ansible_os_family != 'RedHat'
+
+  - name:              "PREREQUISITES] [ Stop Jenkins service"
+    tags:              [ 'jenkins-prerequisites' ]
+    service:
+      name:            jenkins
+      state:           stopped
+
+# REMOVE JENKINS
+  - name:              "JENKINS-REMOVE] [ Remove the existing Jenkins installation"
+    tags:              [ 'jenkins-remove' ]
+    yum:
+      name:            jenkins
+      state:           absent
+    register:          jenkins_install
+    when:              jenkins_delete_existing
+
+  - name:              "JENKINS-REMOVE] [ Delete the config files of existing Jenkins installation"
+    tags:              [ 'jenkins-remove' ]
+    shell:             |
+                       echo "[INFO] Removing the Jenkins config files"
+                       configs=( {{ jenkins_sysconfig }} {{ jenkins_initscript }} {{ jenkins_logrotate }} )
+                       for filename in ${configs[*]}
+                       do
+                         [[ ! -f $filename ]]||{ echo "[INFO] Removing ${filename}";rm -f ${filename}; }
+                         [[ ! -f ${filename}.rpmsave ]]||{ echo "[INFO] Removing ${filename}.rpmsave";rm -f ${filename}.rpmsave; }
+                       done
+                       [[ ! -d {{ jenkins_cache }} ]]||{ echo "[INFO] Removing {{ jenkins_cache }}";rm -rf {{ jenkins_cache }}; }
+                       [[ ! -d {{ jenkins_log }} ]]||{ echo "[INFO] Removing {{ jenkins_log }}";rm -rf {{ jenkins_log }}; }
+                       [[ ! -d {{ jenkins_home }} ]]||{ echo "[INFO] Removing {{ jenkins_home }}";rm -rf {{ jenkins_home }}; }
+    register:          jenkins_install
+    when:              jenkins_delete_existing
+
+# INSTALL JENKINS RPM
+  - name:              "JENKINS-INSTALL-RPM] [ Import the key of redhat-stable jenkins repo"
+    tags:              [ 'jenkins-install-rpm' ]
+    rpm_key:
+      key:             https://pkg.jenkins.io/redhat-stable/jenkins.io.key
+      state:           present
+      validate_certs:  False
+    when:              jenkins_install_rpm
+
+  - name:              "JENKINS-INSTALL-RPM] [ Install redhat-stable Jenkins repo"
+    tags:              [ 'jenkins-install-rpm' ]
+    get_url:
+      url:             https://pkg.jenkins.io/redhat-stable/jenkins.repo
+      dest:            /etc/yum.repos.d/jenkins.repo
+    when:              jenkins_install_rpm
+
+  - name:              "JENKINS-INSTALL-RPM] [ Install Jenkins OSS from redhat-stable repo"
+    tags:              [ 'jenkins-install-rpm' ]
+    yum:
+      name:            jenkins
+      state:           latest
+      update_cache:    True
+      validate_certs:  True
+    register:          jenkins_install
+    when:              jenkins_install_rpm
+
+# INSTALL JENKINS.SERVICE
+  - name:             "JENKINS-INSTALL-RPM] [ Install Jenkins.service from a template"
+    tags:              [ 'jenkins-service' ]
+    template:
+      src:             jenkins.service.j2
+      dest:            /usr/lib/systemd/system/jenkins.service
+      owner:           root
+      group:           root
+      mode:            0644
+    when:              jenkins_install_rpm
+
+  - name:              "JENKINS-INSTALL-RPM] [ Create a symlink to a service script"
+    tags:              [ 'jenkins-service' ]
+    file:
+      src:             /usr/lib/systemd/system/jenkins.service
+      dest:            /etc/systemd/system/multi-user.target.wants/jenkins.service
+      owner:           root
+      group:           root
+      mode:            0644
+      state:           link
+    when:              jenkins_install_rpm
+
+# EDIT JENKINS SYSCONFIG
+  - name:              "JENKINS-EDIT-SYSCONFIG] [ Create symbolic link for jenkins-java"
+    tags:              [ 'jenkins-edit-sysconfig' ]
+    file:
+      src:             "{{ jenkins_java_home }}/bin/java"
+      dest:            "{{ jenkins_java_home }}/bin/java-jenkins"
+      state:           link
+    when:              jenkins_edit_sysconfig
+
+  - name:              "JENKINS-EDIT-SYSCONFIG] [ Update the Jenkins sysconfig file"
+    tags:              [ 'jenkins-edit-sysconfig' ]
+    file:
+      path:            "{{ jenkins_sysconfig }}"
+      state:           touch
+    when:              jenkins_edit_sysconfig
+
+  - name:              "JENKINS-EDIT-SYSCONFIG] [ Configure JENKINS_HOME"
+    tags:              [ 'jenkins-edit-sysconfig' ]
+    lineinfile:
+      dest:            "{{ jenkins_sysconfig }}"
+      regexp:          ^JENKINS_HOME=
+      line:            JENKINS_HOME="{{ jenkins_home }}"
+    register:          config_changed
+    when:              jenkins_edit_sysconfig
+
+  - name:              "JENKINS-EDIT-SYSCONFIG] [ Configure JENKINS_PORT"
+    tags:              [ 'jenkins-edit-sysconfig' ]
+    lineinfile:
+      dest:            "{{ jenkins_sysconfig }}"
+      regexp:          ^JENKINS_PORT=
+      line:            JENKINS_PORT="{{ jenkins_port }}"
+    register:          config_changed
+    when:              jenkins_edit_sysconfig
+
+  - name:              "JENKINS-EDIT-SYSCONFIG] [ Configure Jenkins for $JAVA_HOME"
+    tags:              [ 'jenkins-edit-sysconfig' ]
+    lineinfile:
+      dest:            "{{ jenkins_sysconfig }}"
+      regexp:          ^JENKINS_JAVA_CMD=
+      line:            JENKINS_JAVA_CMD="{{ jenkins_java_home }}/bin/java-jenkins"
+    register:          config_changed
+    when:              jenkins_edit_sysconfig
+
+  - name:              "JENKINS-EDIT-SYSCONFIG] [ Configure Jenkins for JENKINS_USER"
+    tags:              [ 'jenkins-edit-sysconfig' ]
+    lineinfile:
+      dest:            "{{ jenkins_sysconfig }}"
+      regexp:          ^JENKINS_USER=
+      line:            JENKINS_USER="{{ jenkins_user }}"
+    register:          config_changed
+    when:              jenkins_edit_sysconfig
+
+  - name:              "JENKINS-EDIT-SYSCONFIG] [ Configure JENKINS_PREFIX"
+    tags:              [ 'jenkins-edit-sysconfig' ]
+    lineinfile:
+      dest:            "{{ jenkins_sysconfig }}"
+      regexp:          ^JENKINS_ARGS=
+      line:            JENKINS_ARGS="--prefix=/{{ jenkins_prefix }}"
+    register:          config_changed
+    when:              jenkins_prefix is defined and
+                       jenkins_edit_sysconfig
+
+  - name:              "JENKINS-EDIT-SYSCONFIG] [ Configure JENKINS_JAVA_OPTIONS"
+    tags:              [ 'jenkins-edit-sysconfig' ]
+    lineinfile:
+      dest:            "{{ jenkins_sysconfig }}"
+      regexp:          ^JENKINS_JAVA_OPTIONS=
+      line:            JENKINS_JAVA_OPTIONS={{ jenkins_java_options }}
+    register:          config_changed
+    when:              jenkins_java_options is defined and
+                       jenkins_edit_sysconfig
+
+# PREPARE JENKINS_HOME
+  - name:              "JENKINS-PREPARE-HOME] [Ensure jenkins_home {{ jenkins_home }} exists"
+    tags:              ['jenkins-prepare-home']
+    file:
+      path:            "{{ jenkins_home }}"
+      state:           directory
+      owner:           "{{ jenkins_user }}"
+      group:           "{{ jenkins_group }}"
+      mode:            u+rwx
+      follow:          True
+    when:              jenkins_customize_home
+
+# CONFIGURE JENKINS
+  - name:              "JENKINS-PREPARE-HOME] [Configure Jenkins with xml files"
+    tags:              ['jenkins-configure']
+    template:
+      src:             "{{ item }}.j2"
+      dest:            "{{ jenkins_home }}/{{ item }}"
+      owner:           "{{ jenkins_user }}"
+      group:           "{{ jenkins_group }}"
+      mode:            0644
+    loop:
+                       - jenkins.model.JenkinsLocationConfiguration.xml
+                       - hudson.tasks.Shell.xml
+                       - hudson.tasks.Mailer.xml
+    when:              jenkins_customize_home
+
+# INSTALL PLUGINS
+  - name:               "INSTALL-PLUGINS] [Create jenkins plugins directory."
+    file:
+      path:             "{{ jenkins_plugins }}"
+      owner:            "{{ jenkins_user }}"
+      group:            "{{ jenkins_group }}"
+      mode:             0755
+      state:            directory
+    when:               jenkins_update_plugins
+
+  - name:               "INSTALL-PLUGINS] [Install jenkins plugins"
+    get_url:
+      url:              "{{ jenkins_update_center_url }}/plugins/{{ item.split(':')[0] }}/{{ item.split(':')[1]|default('latest') }}/{{ item.split(':')[0] }}.hpi"
+      dest:             "{{ jenkins_plugins }}"
+      owner:            "{{ jenkins_user }}"
+      group:            "{{ jenkins_group }}"
+      mode:             0644
+    with_items:         "{{ jenkins_plugins_to_install | unique }}"
+    when:               jenkins_update_plugins
+
+
+# START JENKINS
+  - name:              "JENKINS-START] [ Start Jenkins service"
+    tags:              [ 'jenkins-start' ]
+    service:
+      name:            jenkins
+      state:           started
+    when:              jenkins_start_at_the_end
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
